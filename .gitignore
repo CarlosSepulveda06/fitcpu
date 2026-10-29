@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+.vercel/
+.DS_Store
+*.log
+# Exportaciones de datos personales: nunca al repo
+*-export*.json
+fitcpu-datos*.json
