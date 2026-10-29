@@ -2,6 +2,7 @@ import "./style.css";
 import { CATALOG } from "./catalog.js";
 import { searchProducts, productByBarcode } from "./off.js";
 import * as store from "./store.js";
+import { sfx, countUp, confetti, soundOn, setSound, reducedMotion } from "./fx.js";
 
 /* ============ Constantes ============ */
 const MEALS = [["desayuno", "Desayuno"], ["comida", "Comida"], ["cena", "Cena"], ["snack1", "Snack 1"], ["snack2", "Snack 2"]];
@@ -12,7 +13,7 @@ const MESES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "o
 const GLASS = 250;
 
 /* ============ Estado de la interfaz ============ */
-const U = { sel: todayStr(), weekOf: todayStr(), tab: "plan", session: null, ready: false, slide: 0, authMsg: "", authBusy: false };
+const U = { sel: todayStr(), weekOf: todayStr(), tab: "plan", session: null, ready: false, slide: 0, authMsg: "", authBusy: false, anim: null, pop: null, flash: null, lastTab: null, lastSel: null, popWater: false };
 const st = () => store.getState();
 
 /* ============ Utilidades ============ */
@@ -115,7 +116,10 @@ function render() {
   });
   $("banner").innerHTML = store.mode === "local" ? '<div class="banner">Modo local: tus datos se guardan solo en este navegador. Configura Supabase para tener cuenta y respaldo.</div>' : "";
   if (U.tab === "plan") renderPlan(); else if (U.tab === "week") renderWeek(); else renderProg();
+  if (U.lastTab && U.lastTab !== U.tab) replay($({ plan: "viewPlan", week: "viewWeek", prog: "viewProg" }[U.tab]), "enter");
+  U.lastTab = U.tab;
 }
+function replay(el, cls) { if (!el || reducedMotion()) return; el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls); }
 
 function renderAuth() {
   $("auth").innerHTML = `
@@ -148,13 +152,16 @@ function renderPlan() {
 
   // Resumen: tarjeta 1 (kcal y macros) y tarjeta 2 (otros nutrientes)
   const t = dayTotals(U.sel), lo = Math.round(T.kcal * 0.9), hi = Math.round(T.kcal * 1.1);
+  const sameDay = U.anim && U.anim.day === U.sel;
+  const prev = sameDay ? U.anim : { k: 0, p: 0, c: 0, f: 0, frac: 0, w: 0 };
   let state, color;
   if (t.k < lo) { state = "Te faltan " + fmt(lo - t.k) + " kcal para entrar al rango"; color = "var(--accent)"; }
   else if (t.k <= hi) { state = "Dentro de tu rango"; color = "var(--good)"; }
   else { state = "Te pasaste " + fmt(t.k - hi) + " kcal del rango"; color = "var(--bad)"; }
   if (!t.n) state = "Sin registros todavía";
   const pend = dayAll(U.sel).k - t.k; if (pend > 0.5) state += " · " + fmt(pend) + " kcal pendientes";
-  const mac = (lab, v, goal) => `<div class="mac"><div class="ml">${lab}</div><div class="mv num">${fmt(v)} <span>/ ${fmt(goal)} g</span></div><div class="bar${v > goal * 1.1 ? " over" : ""}"><i style="width:${Math.min(100, goal ? (v / goal) * 100 : 0)}%"></i></div></div>`;
+  const pct = (v, goal) => Math.min(100, goal ? (v / goal) * 100 : 0);
+  const mac = (lab, v, goal, pv) => `<div class="mac"><div class="ml">${lab}</div><div class="mv num">${fmt(v)} <span>/ ${fmt(goal)} g</span></div><div class="bar${v > goal * 1.1 ? " over" : ""}"><i class="grow" style="width:${pct(pv, goal)}%" data-w="${pct(v, goal)}"></i></div></div>`;
   const L = limits();
   const nut = (icon, lab, v, lim, unit, isMax) => {
     const over = isMax && v > lim, none = t.n - t.miss === 0;
@@ -165,10 +172,10 @@ function renderPlan() {
     <div class="slides" id="slides">
       <div class="slide card">
         <div class="sum-h"><span>kcal consumidas</span><span class="num">Meta ${fmt(T.kcal)}</span></div>
-        <div class="sum-k num">${fmt(t.k)} <small>/ ${fmt(T.kcal)}</small></div>
-        <div class="arcwrap"><svg viewBox="0 0 320 96" role="img" aria-label="Progreso de calorías del día"><path id="arcTrack" d="M14 74 Q160 14 306 74" fill="none" stroke="var(--card2)" stroke-width="9" stroke-linecap="round"/><path id="arcFill" d="M14 74 Q160 14 306 74" fill="none" stroke="${color}" stroke-width="9" stroke-linecap="round" pathLength="100" stroke-dasharray="0 100"/><g id="arcTicks"></g></svg></div>
+        <div class="sum-k num"><span id="kcalNum">${fmt(prev.k)}</span> <small>/ ${fmt(T.kcal)}</small></div>
+        <div class="arcwrap"><svg viewBox="0 0 320 96" role="img" aria-label="Progreso de calorías del día"><path id="arcTrack" d="M14 74 Q160 14 306 74" fill="none" stroke="var(--card2)" stroke-width="9" stroke-linecap="round"/><path id="arcFill" d="M14 74 Q160 14 306 74" fill="none" stroke="${color}" stroke-width="9" stroke-linecap="round" pathLength="100" stroke-dasharray="${prev.frac * 100} 100" class="arcfill"/><g id="arcTicks"></g></svg></div>
         <div class="state" style="color:${t.n ? color : "var(--muted)"}">${esc(state)}</div>
-        <div class="macros">${mac("Proteínas", t.p, T.p)}${mac("Carbs", t.c, T.c)}${mac("Grasas", t.f, T.f)}</div>
+        <div class="macros">${mac("Proteínas", t.p, T.p, prev.p)}${mac("Carbs", t.c, T.c, prev.c)}${mac("Grasas", t.f, T.f, prev.f)}</div>
         ${T.placeholder ? '<p class="note">Metas de ejemplo. Toca el engrane para calcular las tuyas.</p>' : ""}
       </div>
       <div class="slide card">
@@ -188,8 +195,16 @@ function renderPlan() {
   sl.onscroll = () => { const n = Math.round(sl.scrollLeft / Math.max(1, sl.clientWidth)); if (n !== U.slide) { U.slide = n; document.querySelectorAll(".dots i").forEach((d, i) => d.classList.toggle("on", i === n)); } };
 
   const track = $("arcTrack"), Lt = track.getTotalLength(), max = T.kcal * 2, frac = Math.min(1, t.k / max);
-  $("arcFill").setAttribute("stroke-dasharray", frac * 100 + " 100");
-  if (frac === 0) $("arcFill").setAttribute("stroke-opacity", "0");
+  if (frac === 0 && prev.frac === 0) $("arcFill").setAttribute("stroke-opacity", "0");
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    $("arcFill")?.setAttribute("stroke-dasharray", frac * 100 + " 100");
+    document.querySelectorAll("i.grow[data-w]").forEach((i) => (i.style.width = i.dataset.w + "%"));
+  }));
+  countUp($("kcalNum"), prev.k, t.k, (n) => fmt(n));
+  // Celebración al entrar al rango
+  if (sameDay && t.k >= lo && t.k <= hi && !(prev.k >= lo && prev.k <= hi)) {
+    setTimeout(() => { const r = $("arcTrack")?.getBoundingClientRect(); if (r) confetti(r.left + r.width / 2, r.top + r.height / 2); sfx.goal(); replay(document.querySelector(".streak"), "pulse"); }, 450);
+  }
   let ticks = "";
   [[lo, "end", -5], [hi, "start", 5]].forEach(([v, anc, dx]) => {
     const pt = track.getPointAtLength((Lt * v) / max);
@@ -207,10 +222,11 @@ function renderPlan() {
       mh += '<div class="items">';
       list.forEach((it, i) => {
         const v = itemVals(it), off = it.eaten === false;
-        mh += `<div class="item${off ? " off" : ""}"><span class="em" aria-hidden="true">${esc(it.emoji || "🍽️")}</span>
+        const key2 = key + ":" + i;
+        mh += `<div class="item${off ? " off" : ""}${U.flash === key2 ? " in" : ""}"><span class="em" aria-hidden="true">${esc(it.emoji || "🍽️")}</span>
           <button class="nm" data-edit="${key}:${i}">${esc(it.name)}${it.brand ? `<span class="sub">${esc(it.brand)}</span>` : ""}</button>
           <button class="qt num" data-edit="${key}:${i}">${esc(it.qtyLabel ? it.qtyLabel + " (" + fmt(it.grams) + " g)" : fmt(it.grams) + " g")}<span>${fmt(v.k)} kcal</span></button>
-          <button class="chk${off ? "" : " on"}" data-tog="${key}:${i}" aria-label="${off ? "Marcar como comido" : "Marcar como pendiente"}">${off ? "" : '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#0b1a0d" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>'}</button></div>`;
+          <button class="chk${off ? "" : " on"}${U.pop === key2 ? " pop" : ""}" data-tog="${key}:${i}" aria-label="${off ? "Marcar como comido" : "Marcar como pendiente"}">${off ? "" : '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#0b1a0d" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>'}</button></div>`;
       });
       mh += "</div>";
     }
@@ -220,11 +236,15 @@ function renderPlan() {
   // Agua y notas
   const wg = waterGoal(), w = d.water || 0;
   mh += `<div class="card"><div class="meal-h"><h2>Agua</h2></div>
-    <div class="water num"><span class="wv">💧 <b>${fmt(w / 1000, 2)}</b> <span>/ ${fmt(wg / 1000, 1)} L</span></span><span class="muted">${Math.round(w / GLASS)} de ${Math.round(wg / GLASS)} vasos</span></div>
-    <div class="bar" style="height:9px"><i style="width:${Math.min(100, (w / wg) * 100)}%;background:#5aa9e6"></i></div>
+    <div class="water num"><span class="wv"><span class="drop${U.popWater ? " pop" : ""}" aria-hidden="true">💧</span> <b>${fmt(w / 1000, 2)}</b> <span>/ ${fmt(wg / 1000, 1)} L</span></span><span class="muted">${Math.round(w / GLASS)} de ${Math.round(wg / GLASS)} vasos</span></div>
+    <div class="bar" style="height:9px"><i class="grow" style="width:${Math.min(100, ((sameDay ? prev.w : 0) / wg) * 100)}%;background:#5aa9e6" data-w="${Math.min(100, (w / wg) * 100)}"></i></div>
     <div class="row2" style="margin-top:14px"><button class="addbtn" id="waterMinus" aria-label="Quitar un vaso" ${w ? "" : "disabled"}>−</button><button class="addbtn" id="waterPlus" aria-label="Agregar un vaso de 250 ml">+</button></div></div>`;
   mh += `<div class="card"><div class="meal-h"><h2>Notas</h2></div><textarea id="dayNote" placeholder="¿Cómo te sentiste hoy? ¿Comiste fuera?" maxlength="4000">${esc(d.note || "")}</textarea></div>`;
   $("meals").innerHTML = mh;
+  if (U.lastSel && U.lastSel !== U.sel) { replay($("summary"), "swap"); replay($("meals"), "swap"); }
+  U.lastSel = U.sel;
+  U.anim = { day: U.sel, k: t.k, p: t.p, c: t.c, f: t.f, frac, w };
+  U.pop = U.flash = null; U.popWater = false;
 }
 const flame = (w) => `<svg width="${w}" height="${w * 1.25}" viewBox="0 0 20 24" aria-hidden="true"><path d="M10 1c1 4 6 6.5 6 12.5A6 6 0 0 1 4 13.5C4 10 6 9 6.5 6.5 8 8 8.5 9.5 8.5 11 9.5 8 11 5 10 1Z" fill="currentColor"/></svg>`;
 
@@ -409,6 +429,7 @@ function drawSheet() {
        ${auto ? `<div class="preview num" style="margin-top:0"><div><b>${fmt(auto.kcal)}</b><span>kcal</span></div><div><b>${auto.p}</b><span>Prot g</span></div><div><b>${auto.c}</b><span>Carbs g</span></div><div><b>${auto.f}</b><span>Grasas g</span></div></div><p class="note">Gasto estimado ${fmt(auto.tdee)} kcal (Mifflin-St Jeor × actividad). Proteína 1.5 g por kg ${v.goal === "perder" ? "de tu peso meta" : "de tu peso"}, grasa 27.5% y el resto en carbohidratos.${v.goal === "perder" && v.rate > auto.rate ? " Ritmo ajustado a " + fmt(auto.rate, 2) + " kg/semana (máx. 1% de tu peso)." : ""}</p>` : '<p class="note">Llena edad, estatura y peso para calcularla.</p>'}
        <div class="check-sw"><span>Usar metas propias (ej. las de tu nutriólogo)</span><button class="sw" id="s_manual" role="switch" aria-checked="${!!v.manual}" aria-label="Usar metas propias"></button></div>
        ${v.manual ? `<div class="row4" style="margin-top:10px"><input id="s_k" inputmode="numeric" value="${esc(v.kcal ?? "")}" aria-label="kcal" placeholder="kcal"><input id="s_p" inputmode="numeric" value="${esc(v.p ?? "")}" aria-label="Proteína g" placeholder="Prot"><input id="s_c" inputmode="numeric" value="${esc(v.c ?? "")}" aria-label="Carbs g" placeholder="Carbs"><input id="s_f" inputmode="numeric" value="${esc(v.f ?? "")}" aria-label="Grasas g" placeholder="Grasa"></div>` : ""}
+       <div class="check-sw"><span>Sonidos</span><button class="sw" id="s_sound" role="switch" aria-checked="${soundOn()}" aria-label="Sonidos"></button></div>
        <label class="lbl" for="s_water">Meta de agua (ml, vacío = automática)</label><input id="s_water" inputmode="numeric" value="${esc(v.waterMl ?? "")}" placeholder="${waterGoal()}">
        <button class="cta" id="saveS">Guardar</button>
        <div class="lbl" style="margin-top:22px">Tus datos</div>
@@ -546,7 +567,7 @@ function applyPlan() {
     Object.entries(day.meals).forEach(([m, list]) => { if ((d.meals[m] || []).length) { skipped++; return; } d.meals[m] = list; filled++; changed = true; });
     if (changed) store.saveDay(day.date);
   });
-  closeSheet(); render(); toast("Plan listo: " + filled + " comidas" + (skipped ? " · " + skipped + " ya tenían algo" : ""));
+  sfx.goal(); closeSheet(); render(); toast("Plan listo: " + filled + " comidas" + (skipped ? " · " + skipped + " ya tenían algo" : ""));
 }
 
 /* ============ Acciones ============ */
@@ -579,16 +600,14 @@ function saveWeight(date, kg) {
 document.addEventListener("click", async (e) => {
   const t = e.target.closest("button") || e.target;
   const ds = t.dataset || {};
-  if (t.id === "tabPlan") { U.tab = "plan"; render(); return; }
-  if (t.id === "tabWeek") { U.tab = "week"; render(); return; }
-  if (t.id === "tabProg") { U.tab = "prog"; render(); return; }
-  if (ds.day) { U.sel = ds.day; render(); return; }
+  if (t.id === "tabPlan" || t.id === "tabWeek" || t.id === "tabProg") { const nt = { tabPlan: "plan", tabWeek: "week", tabProg: "prog" }[t.id]; if (nt !== U.tab) sfx.tap(); U.tab = nt; render(); return; }
+  if (ds.day) { if (ds.day !== U.sel) sfx.tap(); U.sel = ds.day; render(); return; }
   if (ds.wk) { U.weekOf = addDays(U.weekOf, +ds.wk); U.sel = addDays(U.sel, +ds.wk); render(); return; }
   if (ds.goday) { U.sel = ds.goday; U.tab = "plan"; render(); scrollTo(0, 0); return; }
-  if (ds.tog) { const [m, i] = ds.tog.split(":"); const d = ensureDay(U.sel), it = d.meals[m][+i]; it.eaten = it.eaten === false; store.saveDay(U.sel); render(); return; }
+  if (ds.tog) { const [m, i] = ds.tog.split(":"); const d = ensureDay(U.sel), it = d.meals[m][+i]; it.eaten = it.eaten === false; it.eaten ? sfx.check() : sfx.uncheck(); U.pop = m + ":" + i; store.saveDay(U.sel); render(); return; }
   if (ds.add) { openSheet({ type: "search", meal: ds.add, q: "" }); setTimeout(() => $("q")?.focus(), 50); return; }
   if (ds.edit) { const [m, i] = ds.edit.split(":"); openQty(foodFromItem(getDay(U.sel).meals[m][+i]), m, { i: +i }); return; }
-  if (t.id === "waterPlus" || t.id === "waterMinus") { const d = ensureDay(U.sel); d.water = Math.max(0, (d.water || 0) + (t.id === "waterPlus" ? GLASS : -GLASS)); store.saveDay(U.sel); render(); return; }
+  if (t.id === "waterPlus" || t.id === "waterMinus") { const d = ensureDay(U.sel); d.water = Math.max(0, (d.water || 0) + (t.id === "waterPlus" ? GLASS : -GLASS)); if (t.id === "waterPlus") { sfx.water(); U.popWater = true; } else sfx.uncheck(); store.saveDay(U.sel); render(); return; }
   if (t.id === "settingsBtn") { openSheet({ type: "settings", v: { sex: "m", activity: 1.2, goal: "perder", rate: 0.5, ...(st().profile || {}) } }); return; }
   if (t.id === "logWeight") { const last = Object.values(st().weights).sort((a, b) => (a.date < b.date ? -1 : 1)).pop(); openSheet({ type: "weight", date: todayStr(), kg: st().weights[todayStr()]?.kg ?? last?.kg ?? st().profile?.weightKg ?? "" }); return; }
   if (ds.w) { openSheet({ type: "weight", date: ds.w, kg: st().weights[ds.w].kg }); return; }
@@ -622,10 +641,11 @@ document.addEventListener("click", async (e) => {
     const f = SH.food, g = Math.round((SH.mode === "u" ? SH.qty * f.g : SH.qty) * 10) / 10; if (!(g > 0)) return;
     const item = { fid: f.id || null, name: f.name, brand: f.brand || "", emoji: f.emoji || "🍽️", per100: { k: f.k, p: f.p, c: f.c, f: f.f, su: f.su ?? null, fi: f.fi ?? null, na: f.na ?? null, sf: f.sf ?? null }, unit: f.unit, unitG: f.g, grams: g, mode: SH.mode, qty: SH.qty, qtyLabel: SH.mode === "u" ? fmt(SH.qty, 2) + " " + f.unit : "", eaten: U.sel <= todayStr() };
     const d = ensureDay(U.sel); d.meals[SH.meal] = d.meals[SH.meal] || [];
-    if (SH.edit) { item.eaten = d.meals[SH.meal][SH.edit.i].eaten; d.meals[SH.meal][SH.edit.i] = item; } else d.meals[SH.meal].push(item);
+    if (SH.edit) { item.eaten = d.meals[SH.meal][SH.edit.i].eaten; d.meals[SH.meal][SH.edit.i] = item; U.flash = SH.meal + ":" + SH.edit.i; sfx.save(); }
+    else { d.meals[SH.meal].push(item); U.flash = SH.meal + ":" + (d.meals[SH.meal].length - 1); sfx.add(); }
     store.saveDay(U.sel); const was = SH.edit; closeSheet(); render(); toast(was ? "Guardado" : "Agregado"); return;
   }
-  if (t.id === "rmItem") { if (!SH.confirmRm) { SH.confirmRm = true; drawSheet(); return; } ensureDay(U.sel).meals[SH.meal].splice(SH.edit.i, 1); store.saveDay(U.sel); closeSheet(); render(); toast("Quitado"); return; }
+  if (t.id === "rmItem") { if (!SH.confirmRm) { SH.confirmRm = true; drawSheet(); return; } ensureDay(U.sel).meals[SH.meal].splice(SH.edit.i, 1); sfx.remove(); store.saveDay(U.sel); closeSheet(); render(); toast("Quitado"); return; }
   if (t.id === "saveNF") {
     const g = (id) => $(id).value, opt = (id) => (g(id).trim() === "" ? null : num(g(id)));
     const f = { name: g("nf_name").trim(), emoji: "🍽️", k: num(g("nf_k")), p: num(g("nf_p")), c: num(g("nf_c")), f: num(g("nf_f")), su: opt("nf_su"), fi: opt("nf_fi"), na: opt("nf_na"), sf: opt("nf_sf"), unit: g("nf_u").trim() || "porción", g: num(g("nf_g")) || 100, src: "mio" };
@@ -633,10 +653,11 @@ document.addEventListener("click", async (e) => {
     if (!f.k && (f.p || f.c || f.f)) f.k = Math.round(f.p * 4 + f.c * 4 + f.f * 9);
     openQty(store.saveFood(f), SH.meal); return;
   }
-  if (t.id === "saveW") { const date = $("w_date").value || todayStr(), kg = Math.round(num($("w_kg").value) * 10) / 10; if (!(kg > 20 && kg < 400)) { toast("Revisa el peso"); return; } saveWeight(date, kg); closeSheet(); render(); toast("Peso guardado"); return; }
+  if (t.id === "saveW") { const date = $("w_date").value || todayStr(), kg = Math.round(num($("w_kg").value) * 10) / 10; if (!(kg > 20 && kg < 400)) { toast("Revisa el peso"); return; } saveWeight(date, kg); sfx.save(); closeSheet(); render(); toast("Peso guardado"); return; }
   if (t.id === "rmW") { if (!SH.confirmRm) { SH.confirmRm = true; drawSheet(); return; } store.deleteWeight(SH.date); closeSheet(); render(); toast("Registro borrado"); return; }
+  if (t.id === "s_sound") { setSound(!soundOn()); t.setAttribute("aria-checked", soundOn()); if (soundOn()) sfx.check(); return; }
   if (t.id === "s_manual") { SH.v = readSettings(); SH.v.manual = !SH.v.manual; if (SH.v.manual && !SH.v.kcal) { const a = autoTargets(SH.v) || targets(); Object.assign(SH.v, { kcal: a.kcal, p: a.p, c: a.c, f: a.f }); } drawSheet(); return; }
-  if (t.id === "saveS") { const v = readSettings(); if (v.manual && !(v.kcal > 800)) { toast("Revisa tus kcal"); return; } store.saveProfile(v); closeSheet(); render(); toast("Metas guardadas"); return; }
+  if (t.id === "saveS") { const v = readSettings(); if (v.manual && !(v.kcal > 800)) { toast("Revisa tus kcal"); return; } store.saveProfile(v); sfx.save(); closeSheet(); render(); toast("Metas guardadas"); return; }
   if (t.id === "exportData") { const blob = new Blob([JSON.stringify(store.exportBackup(), null, 2)], { type: "application/json" }); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "fitcpu-datos-" + todayStr() + ".json"; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000); return; }
   if (t.id === "signOut") { await store.signOut(); U.session = null; closeSheet(); render(); return; }
   if (ds.gd) { const s = ds.gd; SH.days = SH.days.includes(s) ? SH.days.filter((x) => x !== s) : [...SH.days, s].sort(); drawSheet(); return; }
@@ -654,7 +675,7 @@ document.addEventListener("click", async (e) => {
       MEALS.forEach(([m]) => { const list = src.meals?.[m] || []; if (!list.length) return; if ((d.meals[m] || []).length) { skipped++; return; } d.meals[m] = JSON.parse(JSON.stringify(list)).map((it) => ({ ...it, eaten: false })); filled++; ch = true; });
       if (ch) store.saveDay(s);
     });
-    closeSheet(); render(); toast("Copiado: " + filled + " comidas" + (skipped ? " · " + skipped + " ya tenían algo" : "")); return;
+    sfx.save(); closeSheet(); render(); toast("Copiado: " + filled + " comidas" + (skipped ? " · " + skipped + " ya tenían algo" : "")); return;
   }
   if (t.id === "saveNP") { const v = $("np").value; if (v.length < 8) { toast("Mínimo 8 caracteres"); return; } try { await store.updatePassword(v); closeSheet(); toast("Contraseña actualizada"); } catch (err) { toast(authError(err)); } return; }
 });

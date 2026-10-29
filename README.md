@@ -10,6 +10,7 @@ App web para el celular que cuenta calorías y macros, arma tu plan de la semana
 - **Semana**: resumen de 7 días, plan semanal generado con Claude según tus metas y preferencias, y copiar un día a otros.
 - **Progreso**: objetivo de peso con semanas estimadas, gráfica de peso y calorías promedio.
 - **Agua y notas** por día.
+- **Animaciones y sonidos**: el arco y las barras se llenan, confeti al entrar a tu rango, sonidos sintetizados con Web Audio (se apagan en Ajustes) y respeto a "reducir movimiento".
 - **Respaldo**: descarga e importa tus datos en JSON.
 
 ## Cómo calcula las metas
